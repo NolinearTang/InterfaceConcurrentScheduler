@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ICS 并发调度器监控</title>
+  <style>
+    :root {
+      --bg:        #0f1117;
+      --card:      #1a1d2e;
+      --card2:     #1e2235;
+      --border:    #2d3250;
+      --blue:      #4f8ef7;
+      --green:     #2ecc71;
+      --yellow:    #f39c12;
+      --red:       #e74c3c;
+      --purple:    #9b59b6;
+      --txt:       #e0e0e0;
+      --txt2:      #8892a4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--txt); min-height: 100vh; }
+
+    /* ── Header ── */
+    .hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px; background: var(--card); border-bottom: 1px solid var(--border);
+    }
+    .hdr h1 { font-size: 17px; color: var(--blue); }
+    .hdr-sub { font-size: 11px; color: var(--txt2); margin-top: 2px; }
+    .hdr-right { display: flex; align-items: center; gap: 18px; }
+    .last-upd { font-size: 12px; color: var(--txt2); }
+    .conn { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: blink 2s infinite; }
+    .dot.off { background: var(--red); animation: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+    /* ── Layout ── */
+    .main { padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+    .row4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    /* ── Cards ── */
+    .kcard { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+    .kcard .lbl { font-size: 11px; color: var(--txt2); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .kcard .val { font-size: 30px; font-weight: 700; line-height: 1; }
+    .kcard .sub { font-size: 11px; color: var(--txt2); margin-top: 6px; }
+    .c-blue   { color: var(--blue);   }
+    .c-green  { color: var(--green);  }
+    .c-yellow { color: var(--yellow); }
+    .c-purple { color: var(--purple); }
+    .c-red    { color: var(--red);    }
+
+    /* ── Section ── */
+    .sec { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+    .sec-ttl { font-size: 11px; color: var(--txt2); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px; }
+
+    /* ── Global bar ── */
+    .gbarlabels { display: flex; justify-content: space-between; font-size: 12px; color: var(--txt2); margin-bottom: 6px; }
+    .gbar { height: 18px; background: rgba(255,255,255,.05); border-radius: 9px; overflow: hidden; display: flex; }
+    .gbar-seg { height: 100%; transition: width .5s ease; }
+    .seg-g { background: var(--blue);   }
+    .seg-d { background: var(--purple); }
+    .legend { display: flex; gap: 18px; margin-top: 10px; }
+    .leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--txt2); }
+    .leg-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+    /* ── Client table ── */
+    .col-hdr {
+      display: grid;
+      grid-template-columns: 160px 1fr 1fr 70px 80px 80px;
+      gap: 14px; padding: 0 16px 8px;
+      font-size: 11px; color: var(--txt2); text-transform: uppercase; letter-spacing: .8px;
+    }
+    .crows { display: flex; flex-direction: column; gap: 8px; }
+    .crow {
+      display: grid; grid-template-columns: 160px 1fr 1fr 70px 80px 80px;
+      gap: 14px; align-items: center; padding: 12px 16px;
+      background: var(--card2); border: 1px solid var(--border); border-radius: 8px;
+      transition: border-color .2s;
+    }
+    .crow:hover { border-color: var(--blue); }
+    .cname { font-size: 13px; font-weight: 600; }
+    .csub  { font-size: 11px; color: var(--txt2); margin-top: 2px; }
+
+    .mbar-wrap { display: flex; flex-direction: column; gap: 3px; }
+    .mbar-row  { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+    .mbar-lbl  { color: var(--txt2); width: 24px; flex-shrink: 0; }
+    .mbar      { flex: 1; height: 7px; background: rgba(255,255,255,.06); border-radius: 4px; overflow: hidden; }
+    .mbar-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+    .f-blue   { background: var(--blue);   }
+    .f-purple { background: var(--purple); }
+    .f-green  { background: var(--green);  }
+    .f-yellow { background: var(--yellow); }
+    .f-red    { background: var(--red);    }
+    .mbar-val  { color: var(--txt); width: 38px; text-align: right; flex-shrink: 0; }
+
+    .qbadge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 26px; height: 26px; border-radius: 6px; font-size: 13px; font-weight: 700;
+      background: rgba(255,255,255,.05); color: var(--txt2);
+    }
+    .qbadge.hot { background: rgba(243,156,18,.2); color: var(--yellow); }
+
+    .sdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .sdot.idle   { background: var(--txt2); }
+    .sdot.active { background: var(--green);  animation: blink 1.5s infinite; }
+    .sdot.busy   { background: var(--yellow); }
+    .sdot.full   { background: var(--red);    }
+    .slbl { font-size: 11px; color: var(--txt2); }
+
+    /* ── Event log ── */
+    .elog { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+    .elog::-webkit-scrollbar { width: 3px; }
+    .elog::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .eitem { display: flex; gap: 10px; padding: 3px 6px; border-radius: 4px; font-size: 12px; font-family: monospace; }
+    .eitem:hover { background: rgba(255,255,255,.03); }
+    .e-time   { color: var(--txt2);    flex-shrink: 0; }
+    .e-client { color: var(--blue);    width: 100px; flex-shrink: 0; }
+    .e-acq    { color: var(--green);   }
+    .e-rel    { color: var(--txt2);    }
+    .e-tmo    { color: var(--red);     }
+    .e-que    { color: var(--yellow);  }
+    .e-sg     { color: var(--blue);    }
+    .e-sd     { color: var(--purple);  }
+    .e-tok    { color: rgba(255,255,255,.28); font-size: 11px; }
+
+    /* ── Peak bars ── */
+    .peak-row { display: flex; flex-direction: column; gap: 3px; }
+    .peak-lbl { display: flex; justify-content: space-between; font-size: 12px; }
+    .peak-name { color: var(--txt2); }
+    .peak-val  { color: var(--txt);  }
+  </style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <h1>⚡ ICS 并发调度器监控</h1>
+    <div class="hdr-sub">Interface Concurrent Scheduler — Real-time Dashboard</div>
+  </div>
+  <div class="hdr-right">
+    <span class="last-upd" id="lastUpd">--</span>
+    <div class="conn">
+      <div class="dot" id="connDot"></div>
+      <span id="connTxt">已连接</span>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- KPI cards -->
+  <div class="row4">
+    <div class="kcard">
+      <div class="lbl">总并发容量</div>
+      <div class="val c-blue" id="kCap">--</div>
+      <div class="sub">TOTAL_CAPACITY</div>
+    </div>
+    <div class="kcard">
+      <div class="lbl">当前占用</div>
+      <div class="val c-green" id="kUse">--</div>
+      <div class="sub" id="kUseSub">-- 使用率</div>
+    </div>
+    <div class="kcard">
+      <div class="lbl">弹性池可用</div>
+      <div class="val c-purple" id="kDyn">--</div>
+      <div class="sub" id="kDynSub">共 -- 个弹性席位</div>
+    </div>
+    <div class="kcard">
+      <div class="lbl">注册客户端</div>
+      <div class="val c-yellow" id="kClients">--</div>
+      <div class="sub" id="kQueue">等待队列: 0</div>
+    </div>
+  </div>
+
+  <!-- Global capacity bar -->
+  <div class="sec">
+    <div class="sec-ttl">全局并发占用</div>
+    <div class="gbarlabels">
+      <span>0</span>
+      <span id="gbarMid">0 / 10</span>
+      <span id="gbarMax">10</span>
+    </div>
+    <div class="gbar">
+      <div class="gbar-seg seg-g" id="gbarG" style="width:0%"></div>
+      <div class="gbar-seg seg-d" id="gbarD" style="width:0%"></div>
+    </div>
+    <div class="legend">
+      <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div>保底席位占用</div>
+      <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div>弹性席位占用</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(255,255,255,.06)"></div>空闲</div>
+    </div>
+  </div>
+
+  <!-- Client status table -->
+  <div class="sec">
+    <div class="sec-ttl">客户端并发状态</div>
+    <div class="col-hdr">
+      <div>客户端</div>
+      <div>保底并发 (guaranteed)</div>
+      <div>弹性并发 (dynamic)</div>
+      <div>等待队列</div>
+      <div>令牌获取率</div>
+      <div>状态</div>
+    </div>
+    <div class="crows" id="crows"></div>
+  </div>
+
+  <!-- Bottom: event log + peak -->
+  <div class="row2">
+    <div class="sec">
+      <div class="sec-ttl">实时事件日志</div>
+      <div class="elog" id="elog"></div>
+    </div>
+    <div class="sec">
+      <div class="sec-ttl">各客户端近期峰值并发</div>
+      <div id="peaks" style="display:flex;flex-direction:column;gap:12px;"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────
+const API_URL  = 'http://localhost:8080/api/v1/status';
+const WS_URL   = 'ws://localhost:8080/ws/status';
+const INTERVAL = 1000;
+
+const peakMax = {};
+
+// ── Event log ─────────────────────────────────────────
+function pushEvent(type, clientId, slot, tokenId) {
+  const log = document.getElementById('elog');
+  const time = new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  const label = {acquire:'获取令牌',release:'归还令牌',timeout:'超时回收',queue:'排队等待'}[type];
+  const tClass = {acquire:'e-acq',release:'e-rel',timeout:'e-tmo',queue:'e-que'}[type];
+  const sClass = slot==='guaranteed'?'e-sg':'e-sd';
+  const el = document.createElement('div');
+  el.className = 'eitem';
+  el.innerHTML =
+    `<span class="e-time">${time}</span>` +
+    `<span class="e-client">${clientId}</span>` +
+    `<span class="${tClass}">${label}</span>` +
+    `<span class="${sClass}">[${slot}]</span>` +
+    `<span class="e-tok">${tokenId}</span>`;
+  log.insertBefore(el, log.firstChild);
+  while (log.children.length > 60) log.removeChild(log.lastChild);
+}
+
+// ── Render ────────────────────────────────────────────
+function render(d) {
+  const cap  = d.total_capacity;
+  const totG = d.clients.reduce((s,c)=>s+c.in_use_guaranteed,0);
+  const totD = d.clients.reduce((s,c)=>s+c.in_use_dynamic,0);
+  const totU = totG + totD;
+  const totQ = d.clients.reduce((s,c)=>s+c.wait_queue_depth,0);
+  const rate = (totU/cap*100).toFixed(0);
+
+  // KPIs
+  $('kCap').textContent = cap;
+  $('kUse').textContent = totU;
+  $('kUseSub').textContent = rate + '% 使用率';
+  $('kUse').className = 'val ' + (rate>=90?'c-red':rate>=70?'c-yellow':'c-green');
+  $('kDyn').textContent = d.dynamic_pool_available;
+  $('kDynSub').textContent = `共 ${d.dynamic_pool_total} 个弹性席位`;
+  $('kClients').textContent = d.clients.length;
+  $('kQueue').textContent = `等待队列: ${totQ}`;
+
+  // Global bar
+  $('gbarG').style.width  = (totG/cap*100).toFixed(1)+'%';
+  $('gbarD').style.width  = (totD/cap*100).toFixed(1)+'%';
+  $('gbarMid').textContent = `${totU} / ${cap}`;
+  $('gbarMax').textContent = cap;
+
+  // Client rows
+  const grid = $('crows');
+  grid.innerHTML = '';
+  d.clients.forEach(c => {
+    const gPct = c.min>0 ? (c.in_use_guaranteed/c.min*100).toFixed(0) : 0;
+    const dMax = c.max - c.min;
+    const dPct = dMax>0 ? (c.in_use_dynamic/dMax*100).toFixed(0) : 0;
+    const okRate = c.acq_total>0 ? (c.acq_ok/c.acq_total*100).toFixed(0)+'%' : '--';
+    const okColor = okRate==='--'?'var(--txt2)':(parseInt(okRate)<90?'var(--red)':'var(--green)');
+    const gFill = gPct>=90?'f-red':gPct>=60?'f-yellow':'f-blue';
+    const dFill = dPct>=90?'f-red':dPct>=60?'f-yellow':'f-purple';
+    const tot = c.in_use_guaranteed+c.in_use_dynamic;
+    const sc = c.wait_queue_depth>0?'full':tot>=c.max?'busy':tot>0?'active':'idle';
+    const slabel = {idle:'空闲',active:'活跃',busy:'繁忙',full:'排队'}[sc];
+
+    const row = document.createElement('div');
+    row.className = 'crow';
+    row.innerHTML =
+      `<div><div class="cname">${c.client_name||c.client_id}</div><div class="csub">${c.client_id} &nbsp; min:${c.min} max:${c.max}</div></div>` +
+      `<div class="mbar-wrap"><div class="mbar-row">
+         <span class="mbar-lbl">占用</span>
+         <div class="mbar"><div class="mbar-fill ${gFill}" style="width:${gPct}%"></div></div>
+         <span class="mbar-val">${c.in_use_guaranteed}/${c.min}</span>
+       </div></div>` +
+      `<div class="mbar-wrap"><div class="mbar-row">
+         <span class="mbar-lbl">占用</span>
+         <div class="mbar"><div class="mbar-fill ${dFill}" style="width:${dPct}%"></div></div>
+         <span class="mbar-val">${c.in_use_dynamic}/${dMax}</span>
+       </div></div>` +
+      `<div><span class="qbadge ${c.wait_queue_depth>0?'hot':''}">${c.wait_queue_depth}</span></div>` +
+      `<div><span style="font-size:13px;font-weight:600;color:${okColor}">${okRate}</span></div>` +
+      `<div style="display:flex;align-items:center;gap:6px"><div class="sdot ${sc}"></div><span class="slbl">${slabel}</span></div>`;
+    grid.appendChild(row);
+  });
+
+  // Peak bars
+  const pc = $('peaks');
+  pc.innerHTML = '';
+  d.clients.forEach(c => {
+    const cur = c.in_use_guaranteed + c.in_use_dynamic;
+    if (!peakMax[c.client_id]) peakMax[c.client_id] = 0;
+    if (cur > peakMax[c.client_id]) peakMax[c.client_id] = cur;
+    const peak = peakMax[c.client_id];
+    const pct = (peak/c.max*100).toFixed(0);
+    const fillCls = pct>=90?'f-red':pct>=60?'f-yellow':'f-blue';
+    const row = document.createElement('div');
+    row.className = 'peak-row';
+    row.innerHTML =
+      `<div class="peak-lbl">
+         <span class="peak-name">${c.client_name||c.client_id}</span>
+         <span class="peak-val">峰值 ${peak} / ${c.max}</span>
+       </div>
+       <div class="mbar" style="height:9px">
+         <div class="mbar-fill ${fillCls}" style="width:${pct}%"></div>
+       </div>`;
+    pc.appendChild(row);
+  });
+
+  $('lastUpd').textContent = '更新: ' + new Date().toLocaleTimeString('zh-CN',{hour12:false});
+}
+
+function $  (id){ return document.getElementById(id); }
+
+// ── Connection ────────────────────────────────────────
+function setConn(ok) {
+  $('connDot').className = 'dot'+(ok?'':' off');
+  $('connTxt').textContent = ok?'已连接':'已断开';
+}
+
+let pollTm=null, ws=null;
+
+async function fetchOnce(){
+  try {
+    const r = await fetch(API_URL, {signal:AbortSignal.timeout(2000)});
+    if(!r.ok) throw 0;
+    const j = await r.json();
+    setConn(true); render(j.data||j);
+  } catch { setConn(false); }
+}
+
+function startPolling(){ fetchOnce(); pollTm=setInterval(fetchOnce,INTERVAL); }
+
+function startWs(){
+  try {
+    ws = new WebSocket(WS_URL);
+    ws.onopen  = ()=>setConn(true);
+    ws.onclose = ()=>{ setConn(false); startPolling(); };
+    ws.onerror = ()=>ws.close();
+    ws.onmessage = e=>{
+      const d=JSON.parse(e.data);
+      render(d.data||d);
+      if(d.events && d.events.length){
+        d.events.forEach(ev=>pushEvent(ev.type, ev.client_id, ev.slot, ev.token_id));
+      }
+    };
+  } catch { startPolling(); }
+}
+
+(function(){
+  const log = document.getElementById('elog');
+  const el = document.createElement('div');
+  el.className = 'eitem';
+  el.innerHTML = '<span class="e-time" style="color:var(--txt2);font-style:italic">— 等待真实事件 —</span>';
+  log.appendChild(el);
+})();
+startWs();
+</script>
+</body>
+</html>

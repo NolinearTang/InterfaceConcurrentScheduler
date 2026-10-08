@@ -1,0 +1,8 @@
+.idea/
+.git/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+设计文档.md
+client/
